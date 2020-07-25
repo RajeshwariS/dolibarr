@@ -24,7 +24,7 @@
  *	\brief      File of class to manage stock movement (input or output)
  */
 
-
+ 
 /**
  *	Class to manage stock movements
  */
@@ -513,6 +513,10 @@ class MouvementStock extends CommonObject
 					$newpmp = $oldpmp;
 				}
 			}
+
+			//Update stock for child products recursively
+			$this->recursiveStockUpdate($fk_product, $qty);
+
 			// Update stock quantity
 			if (!$error)
 			{
@@ -540,6 +544,8 @@ class MouvementStock extends CommonObject
 					$fk_product_stock = $this->db->last_insert_id(MAIN_DB_PREFIX."product_stock");
 				}
 			}
+
+
 
 			// Update detail stock for batch product
 			if (!$error && !empty($conf->productbatch->enabled) && $product->hasbatch() && !$skip_batch)
@@ -612,6 +618,84 @@ class MouvementStock extends CommonObject
 	}
 
 
+	function getStockGivenID($product_id) {
+	    $sql_get_stock = "SELECT stock FROM ".MAIN_DB_PREFIX."llx_product WHERE idno = ".$product_id;
+			$result_get_stock = $this->db->query($sql_get_stock);
+
+	    if($result_get_stock) {
+					while($row = $this->db->fetch_array($result_get_stock)) {
+	            $stock = $row->stock;                             // get the stock of input product
+	        }
+	        return $stock;
+	    }
+	    if( !$result_get_stock ) {
+				  dol_print_error($this->db);
+	        die('Could not fetch stock for product '. $product . ' : ' . mysqli_error($conn));
+	    }
+	}
+
+	#Update stock for given product_id with new_stock
+	function updateStock($product_id, $new_stock) {
+	    $sql_update_stock = "UPDATE ".MAIN_DB_PREFIX."llx_product SET stock = ".$new_stock." WHERE idno = ".$product_id;
+			$result_update_stock = $this->db->query($sql_update_stock);
+
+	    if( !$result_update_stock ) {
+				dol_print_error($this->db);
+	      die('Could not update stock for product '. $product_id . ' : ' . mysqli_error($conn));
+				#return 1;
+	    }
+	    $updated_stock = getStockGivenID($conn, $product_id);
+	    return $updated_stock;
+	}
+
+
+	//Recursive function to update stock for child components of a given parent product
+	//reqd_stock=customer order
+	function recursiveStockUpdate($rowid_of_parent, $reqd_stock) {
+			require_once DOL_DOCUMENT_ROOT.'/custom/factory/class/factory.class.php';
+			$factory = new Factory($this->db);
+
+	    $resultArray = $factory->get_children($rowid_of_parent, $reqd_stock);
+	    #Example resultArray: Rows are children of input parent. Column 0 is rowid of child product, column 1 is qty*(reqd stock of immediate parent)
+	    #Array ( [0] => Array ( [0] => 1 [1] => 40 ) [1] => Array ( [0] => 2 [1] => 40 ) [2] => Array ( [0] => 3 [1] => 40 ) )
+	    echo "Required stock for children of " . $rowid_of_parent;
+	    print_r($resultArray);
+	    echo "<br>";
+
+	    if(sizeof($resultArray) == 0) {
+	       echo "No children for parent " . $rowid_of_parent . "<br>";
+	       return;
+	    }
+
+	    for( $i = 0; $i < sizeof($resultArray); $i++ ) {
+	        echo "Calling recursiveStockUpdate() for product" . $resultArray[$i][0] . " with required stock " .$resultArray[$i][1]. "<br>";
+	        recursiveStockUpdate($conn, $resultArray[$i][0], $resultArray[$i][1]);
+
+	        echo "Updating stock for product " . $resultArray[$i][0] . "<br>";
+
+	        $product_id = (int)$resultArray[$i][0];
+	        $mysql_get_current_stock =  "SELECT stock FROM ".MAIN_DB_PREFIX."llx_product WHERE idno = ".$product_id ;
+
+					$result_get_current_stock = $this->db->query($mysql_get_current_stock);
+
+	        if($result_get_current_stock) {
+						  while($row = $this->db->fetch_array($result_get_current_stock)) {
+	                 $current_stock = $row->stock;
+	                 $difference = $current_stock - $resultArray[$i][1];
+	                 if ( $difference < 0) {
+	                    die('Current stock '. $current_stock . ' Required stock ' . $resultArray[$i][1] . 'Not enough stocks available for ' .$product_id);
+	                 }
+	            }
+	            $updated_stock = updateStock($product_id, $difference);
+	            echo "Updated stock for product " . $product_id . "is " . $updated_stock ."<br>";
+	        }
+	        if(! $result_get_current_stock ) {
+						  dol_print_error($this->db);
+	            die('Could not fetch current stock for product '. $product_id . ' : ' . mysqli_error($conn));
+							#return 1
+	        }
+	    }
+	}
 
 	/**
 	 * Load object in memory from the database
